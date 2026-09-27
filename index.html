@@ -279,11 +279,12 @@ function calcular(){
   // supervivencia
   const grupos = {};
   S.supervivencia.forEach(r=>{ const g = grupos[r.cat] || (grupos[r.cat] = { cat:r.cat, porDia:0, rubros:[] }); g.porDia += Number(r.porDia)||0; g.rubros.push(r.nombre); });
-  const superv = (q) => Object.values(grupos).map(g=>{
-    const pres = g.porDia*q.dias; let gast = 0;
-    movs.forEach(m=>{ if (m.fecha>=q.start && m.fecha<=q.end && m.catId===g.cat){ if (m.tipo==='gasto' && !m.bolsillo) gast += +m.monto; if (m.tipo==='reintegro') gast -= +m.monto; } });
-    return { ...g, nombre: catNombre(g.cat), pres, gast, rest: pres-gast };
-  });
+  // la supervivencia cuenta desde el día en que empezaste a usar la app (la primera quincena va a medias)
+  const superv = (q) => { const ini = S.creado > q.start ? S.creado : q.start; const dias = Math.max(0, diffD(ini,q.end)+1); return Object.values(grupos).map(g=>{
+    const pres = g.porDia*dias; let gast = 0;
+    movs.forEach(m=>{ if (m.fecha>=ini && m.fecha<=q.end && m.catId===g.cat){ if (m.tipo==='gasto' && !m.bolsillo) gast += +m.monto; if (m.tipo==='reintegro') gast -= +m.monto; } });
+    return { ...g, nombre: catNombre(g.cat), pres, gast, rest: pres-gast, dias, ini };
+  }); };
   const q = quincenaDe(T, movs);
   const diasRest = Math.max(1, diffD(T,q.end)+1);
   const sv = superv(q);
@@ -370,7 +371,11 @@ function calcular(){
   const alertas = [];
   activas.filter(d=>d.atrasada).forEach(d=> alertas.push({ n:'rojo', t:`${d.nombre}: la cuota de este mes (${$$(d.cuotaMes)}) está atrasada desde el ${fcorta(d.prox)}.` }));
   plan.filter(p=>p.kind==='fijo'&&p.atrasado).forEach(p=> alertas.push({ n:'rojo', t:`${p.nombre}: vencía el ${fcorta(p.prox)} y no está registrado como pagado.` }));
-  if (disponible < 0) alertas.push({ n:'rojo', t:`Tu disponible libre está en ${$$(disponible)}: lo apartado supera lo que tienes.` });
+  if (disponible < 0){
+    const hasta = fcorta(addD(q.end,1));
+    if (apartado <= 0) alertas.push({ n:'rojo', t:`Lo que tienes (${$$(saldoTotal)}) no alcanza para la supervivencia que queda (${$$(reservado)}). Te faltan ${$$(-disponible)} para llegar al ${hasta}.` });
+    else alertas.push({ n:'rojo', t:`Te faltan ${$$(-disponible)}: lo que tienes (${$$(saldoTotal)}) no cubre lo apartado (${$$(apartado)}) más la supervivencia que queda (${$$(reservado)}).` });
+  }
   plan.filter(p=>!p.pagado && p.faltaPago>0 && p.prox && diffD(T,p.prox)>=0 && diffD(T,p.prox)<=5).forEach(p=> alertas.push({ n:'amarillo', t:`${p.nombre} se paga el ${fcorta(p.prox)} y faltan ${$$(p.faltaPago)} por apartar.` }));
   sv.filter(g=>g.rest<0).forEach(g=> alertas.push({ n:'amarillo', t:`${g.nombre}: ya gastaste ${$$(-g.rest)} más de lo presupuestado en esta quincena.` }));
   if (reponer > 0) alertas.push({ n:'amarillo', t:`Sacaste ${$$(reponer)} del fondo de emergencia. Repónlo cuando puedas.` });
@@ -475,7 +480,7 @@ function vInicio(C){
 function quincenaNombre(q){ return `Quincena del ${q.tipo}`; }
 function svRow(g,C){
   const alcanza = g.porDia>0 ? Math.floor(Math.max(0,g.rest)/g.porDia) : 0;
-  return `<div style="margin-top:10px"><div class="row"><span class="col"><span>${esc(g.nombre)}</span><span class="tiny faint">${$$(g.porDia)}/día</span></span><span class="col" style="align-items:flex-end"><b class="${g.rest<0?'neg':''}">${$$(g.rest)}</b><span class="tiny faint">de ${$$(g.pres)}</span></span></div><div class="bar ${g.rest<0?'over':''}"><i style="width:${g.rest<0?100:pct(g.rest,g.pres)}%"></i></div><div class="tiny faint" style="margin-top:3px">${g.rest<0?'Te pasaste del presupuesto de la quincena':`Alcanza para ${alcanza} ${alcanza===1?'día':'días'} · quedan ${C.diasRest}`}</div></div>`;
+  return `<div style="margin-top:10px"><div class="row"><span class="col"><span>${esc(g.nombre)}</span><span class="tiny faint">${$$(g.porDia)}/día</span></span><span class="col" style="align-items:flex-end"><b class="${g.rest<0?'neg':''}">${$$(g.rest)}</b><span class="tiny faint">de ${$$(g.pres)}</span></span></div><div class="bar ${g.rest<0?'over':''}"><i style="width:${g.rest<0?100:pct(g.rest,g.pres)}%"></i></div><div class="tiny faint" style="margin-top:3px">${g.rest<0?'Te pasaste del presupuesto de la quincena':`Alcanza para ${alcanza} ${alcanza===1?'día':'días'} · quedan ${C.diasRest} ${C.diasRest===1?'día':'días'}`}</div></div>`;
 }
 
 // ---------- MOVIMIENTOS ----------
@@ -532,7 +537,7 @@ function vPlan(C){
   <div class="wrap">
     <div class="card">
       <div class="row"><h2>Supervivencia diaria</h2><button class="link small" data-a="editSuperv">Editar</button></div>
-      <div class="small muted" style="margin-top:4px">Se aparta primero, cada quincena: ${$$(C.sv.reduce((s,g)=>s+g.porDia,0))} por día × ${q.dias} días = <b style="color:var(--text)">${$$(C.sv.reduce((s,g)=>s+g.pres,0))}</b>.</div>
+      <div class="small muted" style="margin-top:4px">Se aparta primero, cada quincena: ${$$(C.sv.reduce((s,g)=>s+g.porDia,0))} por día × ${C.sv[0]?C.sv[0].dias:q.dias} días = <b style="color:var(--text)">${$$(C.sv.reduce((s,g)=>s+g.pres,0))}</b>.${C.sv[0]&&C.sv[0].dias<q.dias?' <span class="tiny faint">(empezaste a mitad de quincena; se cuenta desde ese día)</span>':''}</div>
       ${C.sv.map(g=>svRow(g,C)).join('')}
     </div>
     <div class="card">
