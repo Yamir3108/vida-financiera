@@ -565,7 +565,7 @@ function vPlan(C){
       <div class="small muted" style="margin-top:4px">Cada uno tiene su bolsillo. Esta quincena toca apartar la parte de la ${q.tipo==='15'?'quincena del 15':'quincena del 30'}.</div>
       ${C.plan.length ? C.plan.map(p=>`<div class="it" style="padding:10px 0;border-bottom:1px solid var(--line);cursor:pointer" data-a="${p.kind==='fijo'?'fijo':'deudaEdit'}" data-id="${p.ref.id}">
         <div class="row"><div class="col"><span>${esc(p.nombre)} ${p.kind==='deuda'?'<span class="badge">cuota</span>':''}</span><span class="tiny faint">${$$(p.monto)} · día ${p.dia||'—'} · esta quincena: ${$$(p.porcion)}${p.apartadoQ?` (apartado ${$$(p.apartadoQ)})`:''}</span></div>${p.pagado?'<span class="badge ok">Pagado</span>':p.atrasado?'<span class="badge bad">Atrasado</span>':`<span class="small"><b>${$$(p.bal)}</b><span class="faint"> / ${$$(p.monto)}</span></span>`}</div>
-        ${p.pagado?'':`<div class="bar"><i style="width:${pct(p.bal,p.monto)}%"></i></div><div class="row" style="margin-top:8px"><span></span><button class="btn sm" data-a="yaPague" data-key="${p.key}">Ya lo pagué este mes</button></div>`}
+        ${p.pagado?'':`<div class="bar"><i style="width:${pct(p.bal,p.monto)}%"></i></div>${p.kind==='fijo'?`<div class="row" style="margin-top:8px"><span></span><button class="btn sm" data-a="yaPague" data-key="${p.key}">Ya lo pagué este mes</button></div>`:''}`}
       </div>`).join('') : '<div class="empty" style="margin-top:8px">Agrega tu arriendo, internet, celular y demás fijos. Las deudas obligatorias (cuota mensual fija) aparecen aquí solas.</div>'}
     </div>
     <div class="card">
