@@ -75,6 +75,20 @@ input.money{font-size:28px;font-weight:700;text-align:center;padding:12px}
 .badge.bad{color:var(--neg);border-color:rgba(239,112,112,.45)}
 .badge.ok{color:var(--pos);border-color:rgba(92,201,138,.45)}
 .badge.w{color:var(--warn);border-color:rgba(231,178,74,.45)}
+.donut{display:flex;gap:10px;align-items:center;margin-top:12px;flex-wrap:wrap}
+.donut svg{flex:none;transform:none}
+.donut .leg{flex:1;min-width:150px;font-size:12px}
+.donut .leg .small{font-size:12px}
+.donut .leg .row{margin-top:5px;flex-wrap:nowrap}
+.donut .leg .row span{white-space:nowrap}
+.donut .leg i,.dotc{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:6px;vertical-align:middle}
+.dbars{position:relative;display:flex;align-items:flex-end;gap:3px;height:120px;margin-top:10px;padding-bottom:16px}
+.dbars .c{flex:1;display:flex;flex-direction:column;justify-content:flex-end;align-items:center;height:100%;position:relative}
+.dbars .b{width:100%;max-width:22px;background:var(--accent);border-radius:4px 4px 0 0}
+.dbars .b.over{background:var(--neg)}
+.dbars .c span{position:absolute;bottom:-16px;font-size:10px;color:var(--faint)}
+.dbars .lim{position:absolute;left:0;right:0;border-top:1px dashed var(--warn);z-index:1;margin-bottom:16px}
+.dbars .lim span{position:absolute;right:0;top:-16px;font-size:10px;color:var(--warn);background:var(--surface);padding:0 3px}
 .status{display:flex;gap:12px;align-items:center}
 .status .ic{width:40px;height:40px;border-radius:50%;display:grid;place-items:center;font-weight:800;font-size:18px;flex:none}
 .status.verde .ic{background:rgba(92,201,138,.16);color:var(--pos)}
@@ -217,6 +231,7 @@ function estadoInicial(){
 let S = null;            // estado
 let view = 'inicio';     // pantalla actual
 let movMes = null;       // mes filtrado en movimientos
+let anaR = 'todo';      // rango del análisis de gastos
 let movFiltro = { tipo:'', cat:'', cuenta:'' };
 let bloqueado = true;
 let hiddenAt = 0;
@@ -542,10 +557,22 @@ function agregarV11(C){
   const normalHoy = C.movs.filter(m=>m.fecha===T && !esPro(m)).reduce((s,m)=>s+esGastoVida(m),0);
   let proRestante = 0;
   pro.forEach(m=>{ const ini = m.fecha>T?m.fecha:T, fin0 = addD(m.fecha,(+m.dias)-1), fin = fin0<C.q.end?fin0:C.q.end; if (fin>=ini) proRestante += (diffD(ini,fin)+1) * (+m.monto)/(+m.dias); });
+  C.esPro = esPro; C.porcion = porcion;
+  // gastos de vida entre dos fechas (los de varios días, repartidos)
+  C.gastosEntre = (a, b) => { const out = []; C.movs.forEach(m=>{ const v = esGastoVida(m); if (!v) return;
+      if (esPro(m)){ const fin0 = addD(m.fecha,(+m.dias)-1); const ini = m.fecha>a?m.fecha:a, fin = fin0<b?fin0:b; if (fin>=ini) out.push({ m, catId:m.catId, sub:m.sub, monto:(diffD(ini,fin)+1)*v/(+m.dias) }); }
+      else if (m.fecha>=a && m.fecha<=b) out.push({ m, catId:m.catId, sub:m.sub, monto:v }); }); return out; };
   C.gastadoHoy = C.gastoDia(T);
   const inicioHoy = C.libreVida + normalHoy + proRestante;
   C.porDiaHoy = Math.max(0, inicioHoy) / C.diasRest;
   C.quedaHoy = C.porDiaHoy - C.gastadoHoy;
+  // cierre del día: lo que sobró ayer de tu límite diario (no el día de pago: eso lo maneja Repartir)
+  const ayer = addD(T,-1), limAyer = (S.settings.diario||{})[ayer];
+  C.cierreDia = null;
+  if (limAyer!=null && T!==C.q.start && ayer >= (S.creado||'0') && !(S.settings.cierreDia||{})[ayer]){
+    const g = C.gastoDia(ayer), sob = Math.floor((limAyer - g)/100)*100;
+    if (sob >= 1000) C.cierreDia = { fecha:ayer, lim:limAyer, gasto:g, sob };
+  }
   // promedio real de gasto diario (últimos 14 días, desde que usas la app)
   const desdeP = [addD(T,-14), S.creado||T].sort().pop(); const diasP = diffD(desdeP, T);
   let totP = 0; for (let i=0;i<diasP;i++) totP += C.gastoDia(addD(desdeP,i));
@@ -623,7 +650,12 @@ function render(){
   if (bloqueado){ app.innerHTML = pantallaPin('unlock'); return; }
   const C = calcular();
   const ym = C.T.slice(0,7); S.settings.patri = S.settings.patri||{};
-  if (S.settings.patri[ym] !== Math.round(C.patrimonio)){ S.settings.patri[ym] = Math.round(C.patrimonio); guardar(); }
+  let cambio = false;
+  if (S.settings.patri[ym] !== Math.round(C.patrimonio)){ S.settings.patri[ym] = Math.round(C.patrimonio); cambio = true; }
+  // límite diario de hoy (para el cierre del día de mañana)
+  const dd = S.settings.diario = S.settings.diario||{}; const lim = Math.round(C.porDiaHoy);
+  if (dd[C.T] !== lim){ dd[C.T] = lim; Object.keys(dd).sort().slice(0,-60).forEach(k=>delete dd[k]); cambio = true; }
+  if (cambio) guardar();
   let body = '';
   if (view==='inicio') body = vInicio(C);
   else if (view==='movs') body = vMovs(C);
@@ -654,6 +686,7 @@ function vInicio(C){
   <div class="wrap">
     ${sinBackup ? `<div class="card soft row"><span class="small">${S.settings.lastBackup ? `Tu último respaldo fue hace ${diffD(S.settings.lastBackup,C.T)} días.` : 'Aún no has hecho ningún respaldo.'}</span><button class="btn sm pri" data-a="backup">Respaldar</button></div>` : ''}
     ${C.cierreMes ? (()=>{ const R = C.cierreMes.R; const [y,m] = C.cierreMes.ym.split('-').map(Number); return `<div class="card soft"><div class="row"><b>Cierre de ${MESES_L[m-1]}</b><button class="btn sm" data-a="cierreMesOk" data-ym="${C.cierreMes.ym}">Visto</button></div><table class="t" style="margin-top:8px"><tr><td>Entró</td><td class="pos">${$$(R.entro)}</td></tr><tr><td>Gastos de vida</td><td>${$$(R.vida)}</td></tr><tr><td>Fijos</td><td>${$$(R.fijos)}</td></tr><tr><td>Pagos a deudas</td><td>${$$(R.deudas)}</td></tr><tr><td>Ahorrado</td><td>${$$(R.ahorro)}</td></tr></table>${R.top.length?`<div class="small muted" style="margin-top:6px">Lo que más pesó: ${R.top.map(t=>esc(t[0])).join(', ')}. ¿Qué vas a hacer distinto este mes?</div>`:''}</div>`; })() : ''}
+    ${C.cierreDia ? cierreDiaCard(C) : ''}
     <div class="card hero">
       <div class="small muted">${neg?'Hoy te pasaste por':'Hoy puedes gastar'}</div>
       <div class="big ${neg?'neg':''}">${$$(Math.abs(C.quedaHoy))}</div>
@@ -669,6 +702,7 @@ function vInicio(C){
     <div class="card"><div class="status ${C.estado}"><div class="ic">${icon}</div><div class="col"><b>${label}</b><span class="small muted">${esc(C.razon)}</span></div></div>
       ${nAlert.length>1?`<details class="dt"><summary>Ver ${nAlert.length} avisos</summary>${C.alertas.map(a=>`<div class="alert"><b class="${a.n==='rojo'?'neg':a.n==='amarillo'?'warn':'faint'}">${a.n==='rojo'?'✕':a.n==='amarillo'?'!':'i'}</b><span>${esc(a.t)}</span></div>`).join('')}</details>`:''}
     </div>
+    ${(()=>{ const A = analisis(C,'todo'); const r = A.R.find(x=>x.a>0); if (A.diasC<7 || !r) return ''; return `<div class="card"><div class="row"><b>💡 Consejo con tus datos</b><button class="link small" data-a="nav" data-v="movs">Ver gráficas</button></div><div class="small" style="margin-top:6px">${r.t}</div></div>`; })()}
     <div class="card">
       <div class="row"><h2>Lo próximo que pagas</h2><button class="link small" data-a="nav" data-v="plan">Ver todo</button></div>
       ${proximos.length ? proximos.map(p=>`<div class="row" style="margin-top:10px"><div class="col"><span>${esc(p.n)}</span><span class="tiny faint">${fcorta(p.f)} · ${$$(p.tot)}${p.bal?` · apartado ${$$(p.bal)}`:''}</span></div>${p.atr?'<span class="badge bad">Atrasado</span>':p.pos?'<span class="badge">Pospuesto</span>':p.m>0?`<span class="badge w">Faltan ${$$(p.m)}</span>`:'<span class="badge ok">Listo</span>'}</div>`).join('') : '<div class="empty">No hay pagos pendientes.</div>'}
@@ -688,6 +722,21 @@ function vInicio(C){
       <div class="card" style="margin:0;cursor:pointer" data-a="nav" data-v="futuro"><div class="small muted">Ahorrado${C.saldoInv?' e invertido':''}</div><div class="mid">${$$(C.ahorradoTotal + (C.saldoInv||0))}</div><div class="tiny faint">${C.escalonSig?`emergencia: ${C.escalonActual?esc(C.escalonActual.l)+' ✓ · ':''}va por ${esc(C.escalonSig.l)}`:'fondo de emergencia completo'}</div></div>
     </div>
   </div>`;
+}
+function destinosCierre(C){
+  const out = [{ k:'emergencia', l:'🛟 Fondo de emergencia' }];
+  C.activas.filter(d=>d.tipo!=='obligatoria'&&d.fechaFinal&&d.fechaFinal>C.q.end&&d.saldoAct>d.bolsillo).sort((a,b)=>a.fechaFinal<b.fechaFinal?-1:1).forEach(d=> out.push({ k:'deuda:'+d.id, l:`💸 ${d.nombre} (${fcorta(d.fechaFinal)})` }));
+  C.compromisos.filter(i=>!i.on && i.key && i.key.indexOf(':')>0).forEach(i=>{ if (!out.some(o=>o.k===i.key)) out.push({ k:i.key, l:`📌 ${bolsilloNombre(i.key)}` }); });
+  const mt = sigMetaTurno(C); if (mt) out.push({ k:mt.id, l:`🎯 ${mt.nombre}` });
+  return out.slice(0,5);
+}
+function cierreDiaCard(C){
+  const c = C.cierreDia;
+  return `<div class="card soft"><div class="row"><b>🌙 Cierre de ayer</b><span class="tiny faint">${fcorta(c.fecha)}</span></div>
+    <div class="small" style="margin-top:6px">Tu límite era <b>${$$(c.lim)}</b> y gastaste <b>${$$(c.gasto)}</b>. Te sobraron <b class="pos">${$$(c.sob)}</b>. ¿A dónde los mandas?</div>
+    <input class="i" id="cdMonto" inputmode="numeric" data-money value="$${miles(c.sob)}" style="margin-top:8px">
+    <div class="chips" style="margin-top:8px">${destinosCierre(C).map(o=>`<button class="chip" data-a="cierreDia" data-k="${esc(o.k)}">${esc(o.l)}</button>`).join('')}<button class="chip" data-a="cierreDia" data-k="">Dejarlo para los próximos días</button></div>
+    <div class="hint">Si lo mandas a un lado, sale de tu plata del día y tu límite diario se mantiene fijo. ${S.settings.bolsilloDiario?'En Bancolombia, pásalo del bolsillo Diario al bolsillo correspondiente.':'Pásalo también en el banco al bolsillo correspondiente.'}</div></div>`;
 }
 function quincenaNombre(q){ return `Pago del ${fcorta(q.own||q.start)}`; }
 function svRow(g,C){
@@ -731,8 +780,9 @@ function vMovs(C){
   list = list.slice().reverse();
   const porDia = {}; list.forEach(x=>(porDia[x.fecha]=porDia[x.fecha]||[]).push(x));
   const cats = [...S.categorias.gasto, ...S.categorias.ingreso];
-  const RM = resumenMes(C, movMes), Rp = resumenMes(C, mesAntes(movMes));
-  const dlt = Rp.vida>0 ? Math.round((RM.vida-Rp.vida)/Rp.vida*100) : null;
+  const esAct = movMes===C.T.slice(0,7), hd = esAct ? +C.T.slice(8,10) : null;
+  const RM = resumenMes(C, movMes), Rp = resumenMes(C, mesAntes(movMes), hd);
+  const dlt = (Rp.vida>0 && (S.creado||'9') <= mesAntes(movMes)+'-01') ? Math.round((RM.vida-Rp.vida)/Rp.vida*100) : null;
   return `
   <div class="top"><h1>Movimientos</h1><button class="btn sm" data-a="cuadre">Cuadrar cuentas</button></div>
   <div class="wrap">
@@ -748,8 +798,9 @@ function vMovs(C){
         <tr><td>Ahorrado <span class="tiny faint">(emergencia, metas, fondos)</span></td><td class="${RM.ahorro>=0?'pos':'neg'}">${$$(RM.ahorro)}</td></tr>
       </table>
       ${RM.top.length?`<div class="small muted" style="margin-top:8px">En lo que más gastaste: ${RM.top.map(t=>`<b style="color:var(--text)">${esc(t[0])}</b> ${$$(t[1])}`).join(' · ')}</div>`:''}
-      ${dlt!==null?`<div class="small" style="margin-top:6px">Gastos de vida vs ${MESES_L[(m+10)%12]}: <b class="${dlt<=0?'pos':'neg'}">${dlt>0?'+':''}${dlt}%</b> ${dlt<=0?'✅':''}</div>`:''}
+      ${dlt!==null?`<div class="small" style="margin-top:6px">Gastos de vida vs ${hd?`los mismos ${hd} días de `:''}${MESES_L[(m+10)%12]}: <b class="${dlt<=0?'pos':'neg'}">${dlt>0?'+':''}${dlt}%</b> ${dlt<=0?'✅':''}</div>`:''}
     </div>
+    ${esAct?analisisCard(C):''}
     <div class="grid2" style="margin-top:10px;grid-template-columns:1fr 1fr 1fr">
       <select class="i" data-a-change="filtro" data-k="tipo"><option value="">Tipo</option>${Object.entries(TIPOS).map(([k,v])=>`<option value="${k}" ${movFiltro.tipo===k?'selected':''}>${v.l}</option>`).join('')}</select>
       <select class="i" data-a-change="filtro" data-k="cat"><option value="">Categoría</option>${cats.map(c=>`<option value="${c.id}" ${movFiltro.cat===c.id?'selected':''}>${esc(c.nombre)}</option>`).join('')}</select>
@@ -764,8 +815,87 @@ function vMovs(C){
 function semaforoEndeud(C){ if (C.endeud==null) return ''; const p = C.endeud*100; const c = p<=30?'pos':p<=40?'warn':'neg';
   return `<div class="small" style="margin-top:8px">Tus cuotas son el <b class="${c}">${p.toFixed(1).replace('.',',')} %</b> de tu nómina (${$$(C.cuotasMes)} de ${$$(C.ingresoMes)} al mes). ${p<=30?'Sano.':p<=40?'En el límite: no tomes deudas nuevas.':'Alto: no tomes deudas nuevas.'} Meta: menos del 30 %.</div>`; }
 const mesAntes = ym => { const [y,m] = ym.split('-').map(Number); return m===1 ? `${y-1}-12` : `${y}-${pad(m-1)}`; };
-function resumenMes(C, ym){
-  const xs = C.movs.filter(x=>x.fecha.slice(0,7)===ym && !x.previo);
+// ---------- análisis de gastos: gráficas y recomendaciones ----------
+const COL_CAT = { alimentacion:'#4fb3a9', antojos:'#e7b24a', transporte:'#6a9cf0', mascota:'#c58af0', personal:'#ef7070', pareja:'#f08ac0', entretenimiento:'#5cc98a', salud:'#f0a05c', vivienda:'#8fb0c8', comunicaciones:'#b0c86a', educacion:'#6ad0e0', familia:'#e08a6a', trabajo:'#a0a0e0', financieros:'#c8a070', otros:'#707988' };
+function analisis(C, rango){
+  const T = C.T, ini0 = S.creado||T;
+  const desde = [rango==='7'?addD(T,-6) : rango==='pago'?C.q.start : rango==='mes'?T.slice(0,8)+'01' : ini0, ini0].sort().pop();
+  const items = C.gastosEntre(desde, T);
+  const total = items.reduce((s,i)=>s+i.monto,0);
+  const ayer = addD(T,-1), diasC = diffD(desde, T); // días completos (sin hoy)
+  let totC = 0; for (let f = desde; f<T; f = addD(f,1)) totC += C.gastoDia(f);
+  const prom = diasC>0 ? totC/diasC : 0;
+  const porCat = {}; items.forEach(i=>{ porCat[i.catId]=(porCat[i.catId]||0)+i.monto; });
+  const cats = Object.entries(porCat).filter(([,v])=>v>0).sort((a,b)=>b[1]-a[1]).map(([k,v])=>({ k, l:catNombre(k), v, c:COL_CAT[k]||'#9aa' }));
+  const porSub = {}; items.forEach(i=>{ const k = i.sub || catNombre(i.catId); const o = porSub[k] = porSub[k]||{ k, cat:i.catId, v:0, n:0 }; o.v += i.monto; if (i.monto>0 && (C.esPro(i.m) ? i.m.fecha>=desde : true)) o.n++; });
+  Object.values(porSub).filter(o=>o.v<0).forEach(o=>{ const dst = Object.values(porSub).filter(x=>x.cat===o.cat&&x.v>0).sort((a,b)=>b.v-a.v)[0]; if (dst){ dst.v += o.v; o.v = 0; } });
+  const subs = Object.values(porSub).filter(s=>s.v>0).sort((a,b)=>b.v-a.v);
+  const dias = []; for (let f = desde; f<=T; f = addD(f,1)) dias.push({ f, v:C.gastoDia(f) });
+  const lim = Math.round(C.porDiaHoy);
+  // recomendaciones
+  const R = [], base = Math.max(1, diasC), mes = x => Math.round(x/base*30/1000)*1000;
+  const solo = (re, cat) => items.filter(i=>(!cat||i.catId===cat) && re.test(i.sub||''));
+  const cuenta = xs => xs.filter(i=>!C.esPro(i.m)).length;
+  const alm = solo(/almuerzo/i), nA = cuenta(alm), tA = alm.reduce((s,i)=>s+i.monto,0);
+  if (nA>=3){ const p = tA/nA; R.push({ ic:'🍱', a:Math.round(p*3*4.3/1000)*1000, t:`Almorzaste fuera <b>${nA} veces</b> (${$$(p)} en promedio). Si llevas almuerzo de casa 3 días a la semana, dejas de gastar en la calle hasta <b>${$$(p*3*4.3)}</b> al mes (menos lo que cueste el mercado para cocinarlo).` }); }
+  const des = solo(/desayuno/i), nD = cuenta(des), tD = des.reduce((s,i)=>s+i.monto,0);
+  if (nD>=3 && tD/nD>4000){ const p = tD/nD; R.push({ ic:'☕', a:Math.round(p*3*4.3/1000)*1000, t:`Desayunaste fuera <b>${nD} veces</b> (${$$(p)} en promedio). Desayunar en casa 3 días a la semana son hasta <b>${$$(p*3*4.3)}</b> al mes (menos lo de la casa).` }); }
+  const ant = items.filter(i=>i.catId==='antojos'), tAnt = ant.reduce((s,i)=>s+i.monto,0);
+  if (tAnt>0 && diasC>=3){
+    const pd = tAnt/Math.max(1,diasC+1), tope = C.mecatoTope;
+    const tin = solo(/tinto|caf/i,'antojos').reduce((s,i)=>s+i.monto,0);
+    const sobre = dias.filter(d=>C.gastoDia(d.f,'antojos')>tope).length;
+    if (tope && pd>tope*0.6) R.push({ ic:'🍬', a:mes(Math.max(0,tAnt - tope*0.5*(diasC+1))), t:`Antojos: <b>${$$(tAnt)}</b> (${$$(pd)} al día)${tin?`, de eso <b>${$$(tin)}</b> en tintos`:''}. ${sobre?`Pasaste el tope de ${$$(tope)} <b>${sobre} ${sobre===1?'día':'días'}</b>. `:''}Bajar a la mitad del tope con onces de casa (y el café que ya tienes en la casa) son unos <b>${$$(mes(Math.max(0,tAnt - tope*0.5*(diasC+1))))}</b> al mes.` });
+    else R.push({ ic:'✅', a:0, t:`Antojos: <b>${$$(pd)}</b> al día, por debajo de tu tope. Bien ahí.` });
+  }
+  const tx = solo(/taxi|app|moto/i,'transporte'), nT = cuenta(tx), tT = tx.reduce((s,i)=>s+i.monto,0);
+  const svT = (S.supervivencia.find(r=>r.cat==='transporte')||{}).porDia||0, pasaje = svT/2;
+  if (nT>=2 && pasaje>0){ const ah = Math.max(0, tT - nT*pasaje); R.push({ ic:'🛵', a:mes(ah), t:`Pagaste <b>${nT} viajes</b> en moto o taxi (${$$(tT)}). En TuLlave habrían sido unos ${$$(nT*pasaje)}. A este ritmo son <b>${$$(mes(ah))}</b> al mes de diferencia.` }); }
+  const devuelto = m => C.movs.some(r=>r.tipo==='reintegro' && Math.abs(r.monto-m.monto)<=2 && Math.abs(diffD(r.fecha,m.fecha))<=7);
+  const grandes = items.filter(i=>!C.esPro(i.m) && i.monto>=25000 && !devuelto(i.m) && !/mercado|comida|recarga/i.test(i.sub||'')).sort((a,b)=>b.monto-a.monto).slice(0,3);
+  const sinG = diasC>0 ? (totC - grandes.filter(g=>g.m.fecha<T).reduce((s,g)=>s+g.monto,0))/diasC : 0;
+  R.sort((a,b)=>b.a-a.a);
+  const potencial = R.reduce((s,r)=>s+r.a,0);
+  const dentro = dias.filter(d=>d.f<T && d.v<=lim).length;
+  return { desde, items, total, prom, diasC, cats, subs, dias, lim, R, potencial, grandes, sinG, dentro };
+}
+function donut(cats, total){
+  if (!total) return '';
+  const grupo = []; let otros = 0; cats.forEach(c=>{ if (c.v/total < 0.04 && grupo.length>=3) otros += c.v; else grupo.push(c); }); if (otros>0) grupo.push({ k:'resto', l:'Resto', v:otros, c:'#4a5160' });
+  let acc = 0; const segs = grupo.map(c=>{ const p = c.v/total*100; const s = `<circle cx="21" cy="21" r="15.915" fill="none" stroke="${c.c}" stroke-width="6" stroke-dasharray="${Math.max(0,p-0.6).toFixed(2)} ${(100-Math.max(0,p-0.6)).toFixed(2)}" stroke-dashoffset="${(25-acc).toFixed(2)}"/>`; acc += p; return s; }).join('');
+  return `<div class="donut"><svg viewBox="0 0 42 42" width="124" height="124" role="img" aria-label="Gastos por categoría"><circle cx="21" cy="21" r="15.915" fill="none" stroke="var(--surface2)" stroke-width="6"/>${segs}<text x="21" y="20" text-anchor="middle" font-size="3.2" fill="var(--muted)">Total</text><text x="21" y="25" text-anchor="middle" font-size="4.6" font-weight="700" fill="var(--text)">${$$(total).replace(/\.000$/,'k')}</text></svg>
+    <div class="leg">${grupo.map(c=>`<div class="row small"><span><i style="background:${c.c}"></i>${esc(c.l)}</span><span><b>${Math.round(c.v/total*100)}%</b> <span class="faint tiny">${$$(c.v)}</span></span></div>`).join('')}</div></div>`;
+}
+function barrasDias(dias, lim){
+  if (!dias.length) return '';
+  const max = Math.max(lim*1.2, ...dias.map(d=>d.v), 1);
+  return `<div class="dbars"><div class="lim" style="bottom:${(lim/max*100).toFixed(1)}%"><span>${$$(lim)}</span></div>${dias.map(d=>`<div class="c" title="${fcorta(d.f)}: ${$$(d.v)}"><div class="b ${d.v>lim?'over':''}" style="height:${Math.max(1,d.v/max*100).toFixed(1)}%"></div><span>${+d.f.slice(8)}</span></div>`).join('')}</div>`;
+}
+function analisisCard(C){
+  const A = analisis(C, anaR);
+  const rangos = [['todo','Desde que empecé'],['7','7 días'],['pago','Este pago'],['mes','Este mes']];
+  let h = `<div class="card"><h2>¿A dónde se va tu plata?</h2><div class="chips scroll" style="margin-top:8px">${rangos.map(([k,l])=>`<button class="chip ${anaR===k?'on':''}" data-a="anaR" data-v="${k}">${l}</button>`).join('')}</div>`;
+  if (!A.total){ return h + '<div class="empty">Aún no hay gastos en este rango.</div></div>'; }
+  h += `<div class="tiny faint" style="margin-top:6px">Gastos de vida del ${fcorta(A.desde)} a hoy. Fijos y deudas no entran. Lo de varios días (TuLlave, bulto de Kira) va repartido.</div>`;
+  h += donut(A.cats, A.total);
+  h += `<h3 style="margin-top:14px">Día por día</h3><div class="tiny faint">La línea es lo que hoy te alcanza al día. Rojo: días por encima.</div>${barrasDias(A.dias, A.lim)}`;
+  if (A.diasC>0) h += `<div class="grid2" style="margin-top:10px"><div class="kpi"><div class="l">Tu promedio al día</div><div class="v ${A.prom>A.lim?'neg':'pos'}">${$$(A.prom)}</div></div><div class="kpi"><div class="l">Te alcanza al día</div><div class="v">${$$(A.lim)}</div></div></div><div class="tiny faint" style="margin-top:6px">Días dentro del límite: <b>${A.dentro} de ${A.diasC}</b>${A.grandes.length?` · sin los gastos grandes tu promedio sería ${$$(A.sinG)}`:''}.</div>`;
+  h += `<h3 style="margin-top:14px">En qué exactamente</h3>${A.subs.slice(0,8).map(s=>`<div class="r" style="margin-top:8px"><div class="row"><span class="small"><i class="dotc" style="background:${COL_CAT[s.cat]||'#9aa'}"></i>${esc(s.k)} ${s.n>1?`<span class="faint">· ${s.n} veces</span>`:''}</span><b class="small">${$$(s.v)}</b></div><div class="bar"><i style="width:${pct(s.v,A.subs[0].v)}%;background:${COL_CAT[s.cat]||'#9aa'}"></i></div></div>`).join('')}`;
+  if (A.grandes.length) h += `<div class="tiny faint" style="margin-top:8px">Gastos grandes: ${A.grandes.map(g=>`${esc(g.m.nota||g.sub||catNombre(g.catId))} ${$$(g.monto)}`).join(' · ')}</div>`;
+  h += `</div>`;
+  h += `<div class="card"><h2>Recomendaciones</h2>`;
+  if (A.diasC<3) h += `<div class="empty">Con 3 días registrando te empiezo a dar recomendaciones.</div>`;
+  else {
+    if (A.diasC<7) h += `<div class="tiny faint">Con menos de 7 días tómalo como pista, no como regla.</div>`;
+    if (A.prom > A.lim) h += `<div class="alert"><b class="neg">!</b><span>Gastas en promedio <b>${$$(A.prom)}</b> al día y hoy te alcanzan <b>${$$(A.lim)}</b>. Son ${$$(A.prom-A.lim)} de más cada día (unos ${$$((A.prom-A.lim)*30)} al mes).</span></div>`;
+    h += A.R.map(r=>`<div class="alert"><b>${r.ic}</b><span>${r.t}</span></div>`).join('');
+    if (A.potencial>0) h += `<div class="small" style="margin-top:10px">Si aplicas todo, liberas hasta <b class="pos">${$$(A.potencial)}</b> al mes. Lo que liberes, mándalo en el cierre del día al fondo de emergencia o a una deuda.</div>`;
+    h += `<div class="tiny faint" style="margin-top:8px">Cálculos con tus registros; los ahorros son aproximados (al mes = 30 días).</div>`;
+  }
+  return h + `</div>`;
+}
+function resumenMes(C, ym, hastaDia){
+  const xs = C.movs.filter(x=>x.fecha.slice(0,7)===ym && !x.previo && (!hastaDia || +x.fecha.slice(8,10)<=hastaDia));
   const entro = xs.filter(x=>x.tipo==='ingreso'&&(catDe('ingreso',x.catId)||{}).real!==false).reduce((a,x)=>a+ +x.monto,0);
   const vida = xs.reduce((a,x)=>a+esGastoVida(x),0);
   const fijos = xs.filter(x=>x.tipo==='gasto'&&x.bolsillo).reduce((a,x)=>a+ +x.monto,0);
@@ -888,7 +1018,7 @@ function vMas(C){
       <div class="chips" style="margin-top:10px"><button class="btn sm" data-a="cambiarPin">Cambiar PIN</button><button class="btn sm" data-a="bloquear">Bloquear ahora</button></div>
     </div>
     <div class="card"><h2>Zona de peligro</h2><div class="small muted" style="margin:4px 0 10px">Borra todos los datos de este celular. Haz un respaldo antes.</div><button class="btn sm danger" data-a="borrarTodo">Borrar todo</button></div>
-    <div class="tiny faint" style="text-align:center;margin:18px 0">Vida Financiera · versión 12 · tus datos no salen de este celular</div>
+    <div class="tiny faint" style="text-align:center;margin:18px 0">Vida Financiera · versión 13 · tus datos no salen de este celular</div>
   </div>`;
 }
 
@@ -1000,7 +1130,7 @@ function renderForm(){
     h += `<label class="f">Cuenta</label>${cuentasChips()}`;
     if (t==='gasto'){
       const ops = opcionesBolsillo(C,false);
-      if (!F.bolsillo) h += `<label class="f">¿Para cuántos días es?</label><div class="chips">${[1,2,3,5,7,15].map(n=>chip(String(n), n===1?'Solo hoy':`${n} días`, String(F.dias||1)===String(n), 'fSet', 'data-k="dias"')).join('')}</div><div class="hint">Para recargas de TuLlave, comida de Kira o mercado: la app lo reparte entre esos días y no te deja el día en rojo.</div>`;
+      if (!F.bolsillo) h += `<label class="f">¿Para cuántos días es?</label><div class="chips">${[1,2,3,5,7,15,30,60].map(n=>chip(String(n), n===1?'Solo hoy':`${n} días`, String(F.dias||1)===String(n), 'fSet', 'data-k="dias"')).join('')}</div><div class="hint">Para recargas de TuLlave, comida de Kira o mercado: la app lo reparte entre esos días y no te deja el día en rojo.</div>`;
       if (!F.editId){ h += `<label class="row" style="gap:10px;justify-content:flex-start;margin-top:14px"><input type="checkbox" id="fParteOn" data-a-change="fParteOn" ${F.parteOn?'checked':''} style="width:20px;height:20px"><span>Alguien me devuelve una parte</span></label>`;
         if (F.parteOn) h += `<div class="grid2"><div><label class="f">¿Quién?</label><input class="i" id="fPartePersona" value="${esc(F.partePersona||'')}" placeholder="Ej: Jeison"></div><div><label class="f">¿Cuánto te devuelve?</label><input class="i" id="fParteMonto" inputmode="numeric" data-money value="${F.parteMonto?'$'+miles(num(F.parteMonto)):''}"></div></div><div class="hint">En tus gastos queda solo tu parte y lo otro queda en "Me deben".</div>`; }
       h += `<label class="f">Descontar de un apartado</label><select class="i" id="fBolsillo"><option value="">No, sale de la plata libre${F.catId && S.supervivencia.some(r=>r.cat===F.catId)?' / supervivencia':''}</option>${ops.map(o=>`<option value="${o.v}" ${F.bolsillo===o.v?'selected':''}>${esc(o.l)}</option>`).join('')}</select><div class="hint">Si pagas un fijo (arriendo, internet…) o compras una meta, se descuenta de su bolsillo.</div>`;
@@ -1770,6 +1900,12 @@ const A = {
   },
   rGuardar: () => guardarRepartir(),
   sacarAhorros: () => abrirSacarAhorros(),
+  cierreDia: async el => { const C = calcular(); const c = C.cierreDia; if (!c) return; const k = el.dataset.k; const monto = Math.min(num((document.getElementById('cdMonto')||{}).value||'0'), Math.max(0, C.libreVida));
+    if (k && monto>0) S.movs.push({ id:uid(), creado:Date.now(), tipo:'apartar', monto, fecha:hoy(), bolsillo:k, nota:`Sobró del ${fcorta(c.fecha)}` });
+    (S.settings.cierreDia = S.settings.cierreDia||{})[c.fecha] = k || 'libre';
+    Object.keys(S.settings.cierreDia).sort().slice(0,-60).forEach(x=>delete S.settings.cierreDia[x]);
+    await guardar(); toast(k&&monto>0?`${$$(monto)} a ${bolsilloNombre(k)}`:'Queda para los próximos días'); render(); },
+  anaR: el => { anaR = el.dataset.v; render(); },
   cierreMesOk: async el => { (S.settings.cierreMes = S.settings.cierreMes||{})[el.dataset.ym] = true; await guardar(); render(); },
   estrategia: async el => { S.settings.estrategia = el.dataset.v; await guardar(); render(); },
   simular: () => { const g = x=>document.getElementById(x); SIM = { porDia: g('simDia').value.trim()===''?null:num(g('simDia').value), extra: num(g('simExtra').value) }; render(); },
@@ -1883,6 +2019,13 @@ document.addEventListener('visibilitychange', ()=>{
     if (S.settings.mecatoTope==null) S.settings.mecatoTope = 10000;
     if (!S.settings.pospuestos) S.settings.pospuestos = {};
     const ev = S.bolsillos.find(b=>b.id==='b_eventos'); if (ev && ev.aporte){ ev.aporte = 0; ev.pausado = true; }
+    await guardar();
+  }
+  if (!S.settings.v13){
+    S.settings.v13 = true;
+    // Claude se paga el 30 en la noche: mitad en cada pago
+    const cl = S.fijos.find(f=>f.id==='fclaude1001'); if (cl && +cl.diaPago===29){ cl.diaPago = 30; cl.q15 = Math.round(cl.monto/2); cl.q30 = cl.monto - cl.q15; }
+    const sa = S.deudas.find(d=>d.id==='mumkdxknyjive'); if (sa && sa.prioridad==='media') sa.prioridad = 'baja';
     await guardar();
   }
   bloqueado = !!S.settings.pinHash;

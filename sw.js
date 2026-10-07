@@ -1,6 +1,6 @@
 // Vida Financiera — service worker: guarda la app para que funcione sin internet.
 // Al publicar una versión nueva, cambia el número de VERSION.
-const VERSION = 'vf-v12';
+const VERSION = 'vf-v13';
 const ARCHIVOS = ['./', './index.html', './manifest.webmanifest', './icon-192.png', './icon-512.png', './icon-512-maskable.png'];
 
 self.addEventListener('install', e => {
