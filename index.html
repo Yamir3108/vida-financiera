@@ -298,6 +298,7 @@ function calcularBase(){
   const add = (id,v) => { if (id in saldo) saldo[id] += v; };
   const take = (k,v) => { bal[k] = Math.max(0,(bal[k]||0)-v); };
   for (const m of movs){
+    if (antesDeApp(m)) continue;
     const a = Number(m.monto)||0;
     switch(m.tipo){
       case 'ingreso': add(m.cuentaId,a); if (m.catId==='cadena') bal.cadena = 0; break;
@@ -492,7 +493,7 @@ function libreEn(fecha){
   let s = S.cuentas.filter(c=>c.tipo!=='inversion').reduce((a,c)=>a+Number(c.saldoInicial||0),0); const bal = {};
   S.bolsillos.forEach(b=>bal[b.id]=Number(b.inicial||0)); (S.metas||[]).forEach(m=>bal[m.id]=Number(m.inicial||0));
   const take = (k,v)=>{ bal[k] = Math.max(0,(bal[k]||0)-v); };
-  [...S.movs].filter(m=>m.fecha<=fecha).sort((a,b)=>a.fecha<b.fecha?-1:a.fecha>b.fecha?1:a.creado-b.creado).forEach(m=>{ const a = +m.monto||0;
+  [...S.movs].filter(m=>m.fecha<=fecha && !antesDeApp(m)).sort((a,b)=>a.fecha<b.fecha?-1:a.fecha>b.fecha?1:a.creado-b.creado).forEach(m=>{ const a = +m.monto||0;
     if (m.tipo==='transfer'){ if (inv(m.cuentaDestinoId)&&!inv(m.cuentaId)) s-=a; if (inv(m.cuentaId)&&!inv(m.cuentaDestinoId)) s+=a; return; }
     if (m.cuentaId && inv(m.cuentaId)) return;
     switch(m.tipo){ case 'ingreso': s+=a; if (m.catId==='cadena') bal.cadena=0; break; case 'prestamo': case 'reintegro': case 'cobro': s+=a; break;
@@ -500,6 +501,8 @@ function libreEn(fecha){
       case 'apartar': bal[m.bolsillo]=(bal[m.bolsillo]||0)+a; break; case 'sacar': take(m.bolsillo,a); break; } });
   return s - Object.entries(bal).filter(([k])=>k!=='cadena').reduce((x,[,v])=>x+v,0);
 }
+// lo anterior a empezar la app ya está en los saldos iniciales: no vuelve a mover las cuentas
+const antesDeApp = m => !!S.creado && m.fecha < S.creado;
 const esGastoVida = m => (m.tipo==='gasto' && !m.bolsillo && !m.previo) ? +m.monto : m.tipo==='reintegro' ? -m.monto : 0;
 // gastos que no son del día a día (cuota de manejo, ropa, accesorios…): bajan la plata pero no el día en que los pagas
 const NO_DIARIO_CAT = ['vivienda','comunicaciones','salud','educacion','familia','trabajo','financieros','entretenimiento'];
@@ -1079,7 +1082,7 @@ const esAjuste = x => x.tipo==='ingreso' && (x.cuadre || (x.catId==='otro_i' && 
 function saldoEn(f){
   const inv = id => (S.cuentas.find(c=>c.id===id)||{}).tipo==='inversion';
   let s = S.cuentas.filter(c=>!inv(c.id)).reduce((a,c)=>a+(+c.saldoInicial||0),0);
-  S.movs.forEach(m=>{ if (m.previo || m.fecha>f) return; const a = +m.monto;
+  S.movs.forEach(m=>{ if (m.previo || m.fecha>f || antesDeApp(m)) return; const a = +m.monto;
     if (m.tipo==='transfer'){ if (inv(m.cuentaId)&&!inv(m.cuentaDestinoId)) s+=a; else if (!inv(m.cuentaId)&&inv(m.cuentaDestinoId)) s-=a; return; }
     if (inv(m.cuentaId)) return; s += (({ingreso:1,prestamo:1,reintegro:1,cobro:1,gasto:-1,pago:-1,cadena:-1,prestado:-1})[m.tipo]||0)*a; });
   return s;
@@ -1215,7 +1218,7 @@ function vMas(C){
       <div class="chips" style="margin-top:10px"><button class="btn sm" data-a="cambiarPin">Cambiar PIN</button><button class="btn sm" data-a="bloquear">Bloquear ahora</button></div>
     </div>
     <div class="card"><h2>Zona de peligro</h2><div class="small muted" style="margin:4px 0 10px">Borra todos los datos de este celular. Haz un respaldo antes.</div><button class="btn sm danger" data-a="borrarTodo">Borrar todo</button></div>
-    <div class="tiny faint" style="text-align:center;margin:18px 0">Vida Financiera · versión 16 · tus datos no salen de este celular</div>
+    <div class="tiny faint" style="text-align:center;margin:18px 0">Vida Financiera · versión 17 · tus datos no salen de este celular</div>
   </div>`;
 }
 
@@ -1377,6 +1380,7 @@ function renderForm(){
     h += `<label class="f">Cuenta</label>${cuentasChips()}<div class="hint">Sale plata real y se suma a lo que llevas aportado a la cadena.</div>`;
   }
   h += `<label class="f">Fecha</label><input class="i" type="date" id="fFecha" value="${F.fecha}">`;
+  if (S.creado && F.fecha < S.creado) h += `<div class="hint">Es de antes de empezar a usar la app (${fcorta(S.creado)}): queda anotado, pero no mueve tus cuentas porque ya está en tus saldos iniciales.</div>`;
   h += `<label class="f">${t==='sacar'?'Motivo (obligatorio)':'Nota (opcional)'}</label><input class="i" id="fNota" value="${esc(F.nota)}" placeholder="${t==='sacar'?'¿Para qué la sacaste?':t==='reintegro'?'¿Quién te devolvió?':''}">`;
   if (F.previo) h += `<div class="hint">Este pago se hizo antes de empezar a usar la app: marca el mes como pagado pero no descuenta de tu saldo.</div>`;
   h += `<div class="hint neg" id="fErr"></div>`;
